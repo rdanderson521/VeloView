@@ -707,7 +707,7 @@ void vtkSlam::PrintSelf(ostream& os, vtkIndent indent)
 //-----------------------------------------------------------------------------
 vtkSlam::vtkSlam()
 {
-  this->SetNumberOfInputPorts(2);
+  this->SetNumberOfInputPorts(3);
   this->SetNumberOfOutputPorts(5);
   this->Reset();
 }
@@ -764,6 +764,11 @@ int vtkSlam::FillInputPortInformation(int port, vtkInformation *info)
   if ( port == 1 )
   {
     info->Set(vtkDataObject::DATA_TYPE_NAME(), "vtkTable" );
+    return 1;
+  }
+  if ( port == 2 )
+  {
+    info->Set(vtkDataObject::DATA_TYPE_NAME(), "vtkTableImu" );
     return 1;
   }
   return 0;
@@ -2322,6 +2327,7 @@ void vtkSlam::ComputeEgoMotion()
   // function using a Levenberg-Marquardt algorithm
   for (unsigned int icpCount = 0; icpCount < this->EgoMotionICPMaxIter; ++icpCount)
   {
+    std::cout << "start" << std::endl;
     // Rotation and translation at this step
     Eigen::Matrix3d R = GetRotationMatrix(this->Trelative);
     Eigen::Vector3d T;
@@ -2335,6 +2341,7 @@ void vtkSlam::ComputeEgoMotion()
     {
       this->EgoMotionInterpolator = this->InitUndistortionInterpolatorEgoMotion();
     }
+    std::cout << "undistort" << std::endl;
 
     // loop over edges
     for (unsigned int edgeIndex = 0; edgeIndex < this->CurrentEdgesPoints->size(); ++edgeIndex)
@@ -2352,6 +2359,7 @@ void vtkSlam::ComputeEgoMotion()
         this->MatchRejectionHistogramLine[rejectionIndex] += 1;
       }
     }
+    std::cout << "edges" << std::endl;
 
     // loop over surfaces
     for (unsigned int planarIndex = 0; planarIndex < this->CurrentPlanarsPoints->size(); ++planarIndex)
@@ -2369,6 +2377,7 @@ void vtkSlam::ComputeEgoMotion()
         this->MatchRejectionHistogramPlane[rejectionIndex] += 1;
       }
     }
+    std::cout << "surfaces" << std::endl;
 
     usedEdges = this->MatchRejectionHistogramLine[6];
     usedPlanes = this->MatchRejectionHistogramPlane[6];
@@ -2406,6 +2415,7 @@ void vtkSlam::ComputeEgoMotion()
         problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), this->Trelative.data());
       }
     }
+    std::cout << "ceres problem" << std::endl;
 
     ceres::Solver::Options options;
     options.max_num_iterations = this->EgoMotionLMMaxIter;
@@ -2423,8 +2433,11 @@ void vtkSlam::ComputeEgoMotion()
     {
       break;
     }
+    std::cout << "end" << std::endl;
+    std::cout << this->EgoMotionICPMaxIter << std::endl;
+    break;
   }
-
+  std::cout << "test" << std::endl;
   // Provide information about keypoints-neighborhood matching rejections
   this->RejectionInformationDisplay();
 

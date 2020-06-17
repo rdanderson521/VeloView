@@ -36,6 +36,18 @@
         </Documentation>
       </InputProperty>
 
+      <InputProperty
+         name="Imu"
+         port_index="2"
+         command="SetInputConnection">
+        <DataTypeDomain name="input_type">
+          <DataType value="vtkTable"/>
+        </DataTypeDomain>
+        <Documentation>
+          Set the input point cloud
+        </Documentation>
+      </InputProperty>
+
       <OutputPort name="Last Frame processed" index="0" id="port0" />
       <OutputPort name="Trajectory" index="1" id="port1" />
       <OutputPort name="Edge   Map" index="2" id="port2" />
