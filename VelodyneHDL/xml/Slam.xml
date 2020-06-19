@@ -54,6 +54,20 @@
       <OutputPort name="Planar Map" index="3" id="port3" />
       <OutputPort name="Blob   Map" index="4" id="port4" />
 
+      <!-- =================== IMU parameters ===========-->
+
+      <DoubleVectorProperty
+          name="Initial Velocity"
+          command="SetInitialVelocity"
+          default_values="9"
+          number_of_elements="1" >
+        <Documentation>
+          A Rough estimate of the initial velocity of the scanner
+          on its current heading (m/s)
+        </Documentation>
+      </DoubleVectorProperty>
+
+
       <!-- ==================== General ==================== -->
       <IntVectorProperty
           name="Fast Slam"

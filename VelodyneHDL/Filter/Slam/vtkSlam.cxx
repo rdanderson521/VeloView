@@ -305,6 +305,11 @@ double Rad2Deg(double val)
 {
   return val / vtkMath::Pi() * 180;
 }
+
+double Deg2Rad(double val)
+{
+  return (val * vtkMath::Pi()) / 180;
+}
 }
 
 // The map reconstructed from the slam algorithm is stored in a voxel grid
@@ -621,6 +626,24 @@ vtkInformationVector **inputVector, vtkInformationVector *outputVector)
   // Get the input
   vtkPolyData *input = vtkPolyData::GetData(inputVector[0]->GetInformationObject(0));
 
+  if (this->NbrFrameProcessed == 0)
+  {
+    if (inputVector[1]->GetInformationObject(0) == inputVector[2]->GetInformationObject(0))
+    {
+      std::cout << "no IMU" << std::endl;
+      this->UsingImu = false;
+    }
+    else
+    {
+      std::cout << "using IMU" << std::endl;
+      this->UsingImu = true;
+      this->ImuData = vtkTable::GetData(inputVector[2]->GetInformationObject(0));
+      this->ImuDataRow = 0;
+      this->Velocity << this->InitialVelocity,0,0;
+      this->Heading << 0,0,0;
+    }
+  }
+
   this->AddFrame(input);
   // output 0 - Current Frame
   vtkInformation *outInfo0 = outputVector->GetInformationObject(0);
@@ -629,6 +652,8 @@ vtkInformationVector **inputVector, vtkInformationVector *outputVector)
   // add all debug information if displayMode == True
   if (this->DisplayMode == true && this->NbrFrameProcessed > 0)
   {
+    std::cout << "display" << std::endl;
+
     this->DisplayLaserIdMapping(this->vtkCurrentFrame);
     this->DisplayRelAdv(this->vtkCurrentFrame);
     this->DisplayUsedKeypoints(this->vtkCurrentFrame);
@@ -944,7 +969,11 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
     vtkGenericWarningMacro("Slam entry is a null pointer data");
     return;
   }
+
   this->vtkCurrentFrame = newFrame;
+
+  this->PreviousFrameTime = this->CurrentFrameTime;
+  this->CurrentFrameTime = this->vtkCurrentFrame->GetPointData()->GetArray("adjustedtime")->GetTuple1(0);
 
   // Check if the number of lasers has been set
   if (this->NLasers == 0)
@@ -1006,9 +1035,9 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
   // Transform the current keypoints to the
   // referential of the sensor at the end of
   // frame acquisition
-  InitTime();
+  //InitTime();
   //this->TransformCurrentKeypointsToEnd();
-  StopTimeAndDisplay("Undistortion");
+  //StopTimeAndDisplay("Undistortion");
 
   // Perform Mapping
   InitTime();
@@ -2312,6 +2341,77 @@ void vtkSlam::ComputeEgoMotion()
   kdtreePreviousPlanes->setInputCloud(this->PreviousPlanarsPoints);
   kdtreePreviousBlobs->setInputCloud(this->PreviousBlobsPoints);
 
+
+  Eigen::Vector3d avgAcc;
+  Eigen::Vector3d avgGyro;
+  avgAcc << 0,0,0;
+  avgGyro << 0,0,0;
+  double timeDiff;
+  Eigen::Matrix<double, 6, 1> ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
+
+  if (this->UsingImu)
+  {
+    if (this->CurrentFrameTime != this->PreviousFrameTime)
+    {
+      int count = 0, row = this->ImuDataRow;
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->PreviousFrameTime)
+      {
+        row++;
+      }
+      auto imuTable = this->ImuData->GetRowData();
+
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->CurrentFrameTime)
+      {
+        avgAcc(0) += imuTable->GetArray("Acc_X")->GetTuple1(row);
+        avgAcc(1) += imuTable->GetArray("Acc_Y")->GetTuple1(row);
+        avgAcc(2) += imuTable->GetArray("Acc_Z")->GetTuple1(row);
+        avgGyro(0) += Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
+        avgGyro(1) += Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
+        avgGyro(2) += Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
+        count++;
+        row++;
+      }
+      avgAcc(0) /= count;
+      avgAcc(1) /= count;
+      avgAcc(2) /= count;
+      avgGyro(0) /= count;
+      avgGyro(1) /= count;
+      avgGyro(2) /= count;
+
+      timeDiff = (this->vtkCurrentFrame->GetPointData()->GetArray("adjustedtime")->GetTuple1(0) -
+      this->PreviousFrameTime) * 1e-6;
+
+      auto relHeading = (avgGyro*timeDiff);
+      this->Heading += relHeading;
+
+
+      std::cout << "Time: " << timeDiff << std::endl;
+      std::cout << "row: " << row << std::endl;
+      std::cout << "count: " << count << std::endl;
+      std::cout << "Gyro: " << avgGyro.transpose() << std::endl;
+      std::cout << "Acc: " << avgAcc.transpose() << std::endl;
+      //std::cout << "heading: " << this->Heading.transpose() << std::endl;
+
+      this->Velocity += avgAcc * timeDiff;
+
+      std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
+
+      /*Eigen::Matrix3d Rh;
+      Rh = GetRotationMatrix(relHeading);
+      Eigen::Vector3d Rt = Rh * this->Velocity + this->Velocity;*/
+
+      ImuTrelative(0) = relHeading(0);
+      ImuTrelative(1) = relHeading(1);
+      ImuTrelative(2) = relHeading(2);
+      ImuTrelative(3) = this->Velocity(0) * timeDiff;
+      ImuTrelative(4) = this->Velocity(1) * timeDiff;
+      ImuTrelative(5) = this->Velocity(2) * timeDiff;
+
+      this->Trelative << ImuTrelative;
+    }
+  }
+
+
   std::cout << "========== Ego-Motion ==========" << std::endl;
   std::cout << "previous <-> current edges : " << this->PreviousEdgesPoints->size() << " <-> " << this->CurrentEdgesPoints->size()
             << "previous <-> current planes : " << this->PreviousPlanarsPoints->size() << " <-> " << this->CurrentPlanarsPoints->size() << std::endl;
@@ -2320,6 +2420,8 @@ void vtkSlam::ComputeEgoMotion()
   unsigned int usedPlanes = 0;
   Point currentPoint, transformedPoint;
 
+
+  std::cout << "Trelative: " << this->Trelative.transpose() << std::endl;
   // ICP - Levenberg-Marquardt loop:
   // At each step of this loop an ICP matching is performed
   // Once the keypoints matched, we estimate the the 6-DOF
@@ -2327,7 +2429,6 @@ void vtkSlam::ComputeEgoMotion()
   // function using a Levenberg-Marquardt algorithm
   for (unsigned int icpCount = 0; icpCount < this->EgoMotionICPMaxIter; ++icpCount)
   {
-    std::cout << "start" << std::endl;
     // Rotation and translation at this step
     Eigen::Matrix3d R = GetRotationMatrix(this->Trelative);
     Eigen::Vector3d T;
@@ -2341,7 +2442,6 @@ void vtkSlam::ComputeEgoMotion()
     {
       this->EgoMotionInterpolator = this->InitUndistortionInterpolatorEgoMotion();
     }
-    std::cout << "undistort" << std::endl;
 
     // loop over edges
     for (unsigned int edgeIndex = 0; edgeIndex < this->CurrentEdgesPoints->size(); ++edgeIndex)
@@ -2359,7 +2459,6 @@ void vtkSlam::ComputeEgoMotion()
         this->MatchRejectionHistogramLine[rejectionIndex] += 1;
       }
     }
-    std::cout << "edges" << std::endl;
 
     // loop over surfaces
     for (unsigned int planarIndex = 0; planarIndex < this->CurrentPlanarsPoints->size(); ++planarIndex)
@@ -2377,7 +2476,6 @@ void vtkSlam::ComputeEgoMotion()
         this->MatchRejectionHistogramPlane[rejectionIndex] += 1;
       }
     }
-    std::cout << "surfaces" << std::endl;
 
     usedEdges = this->MatchRejectionHistogramLine[6];
     usedPlanes = this->MatchRejectionHistogramPlane[6];
@@ -2415,7 +2513,6 @@ void vtkSlam::ComputeEgoMotion()
         problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), this->Trelative.data());
       }
     }
-    std::cout << "ceres problem" << std::endl;
 
     ceres::Solver::Options options;
     options.max_num_iterations = this->EgoMotionLMMaxIter;
@@ -2433,11 +2530,24 @@ void vtkSlam::ComputeEgoMotion()
     {
       break;
     }
-    std::cout << "end" << std::endl;
-    std::cout << this->EgoMotionICPMaxIter << std::endl;
-    break;
   }
-  std::cout << "test" << std::endl;
+
+  Eigen::Matrix<double,6,1> error = ImuTrelative - this->Trelative;
+
+  Eigen::Vector3d Verror;
+  Verror << error(3), error(4), error(5);
+
+  this->Velocity -= 0.25 * Verror;
+
+  /*auto temp = (avgGyro*timeDiff);
+  this->Trelative(0) = temp(0);
+  this->Trelative(1) = temp(1);
+  this->Trelative(2) = temp(2);
+  this->Trelative(3) = this->Velocity(0) * timeDiff;
+  this->Trelative(4) = this->Velocity(1) * timeDiff;
+  this->Trelative(5) = this->Velocity(2) * timeDiff;*/
+
+  std::cout << "Trelative: " << this->Trelative.transpose() << std::endl;
   // Provide information about keypoints-neighborhood matching rejections
   this->RejectionInformationDisplay();
 
@@ -2446,9 +2556,9 @@ void vtkSlam::ComputeEgoMotion()
   static_cast<vtkIntArray*>(this->Trajectory->GetPointData()->GetArray("EgoMotion: total keypoints used"))->InsertNextValue(this->Xvalues.size());
   std::cout << "used keypoints : " << this->Xvalues.size() << std::endl;
   std::cout << "edges : " << usedEdges << " planes : " << usedPlanes << std::endl;
-
   // Integrate the relative motion
   // to the world transformation
+
   this->UpdateTworldUsingTrelative();
 }
 
@@ -2496,6 +2606,8 @@ void vtkSlam::Mapping()
   Point currentPoint;
   Eigen::MatrixXd estimatorCovariance(6, 6);
 
+
+  std::cout << "Mapping start Tworld: " << this->Tworld.transpose() << std::endl;
   // ICP - Levenberg-Marquardt loop:
   // At each step of this loop an ICP matching is performed
   // Once the keypoints matched, we estimate the the 6-DOF
@@ -2631,6 +2743,8 @@ void vtkSlam::Mapping()
           estimatorCovariance(i, j) = covarianceMat[i + 6 * j];
       break;
       }
+
+      std::cout << "Mapping ICP: " << icpCount << " Tworld: " << this->Tworld.transpose() << std::endl;
   }
 
   // Provide information about keypoints-neighborhood matching rejections
