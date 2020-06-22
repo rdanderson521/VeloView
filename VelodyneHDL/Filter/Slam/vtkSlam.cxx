@@ -1041,7 +1041,7 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
 
   // Perform Mapping
   InitTime();
-  //this->Mapping();
+  this->Mapping();
   StopTimeAndDisplay("Mapping");
 
   // Current keypoints become previous ones
@@ -2370,9 +2370,9 @@ void vtkSlam::ComputeEgoMotion()
         avgAcc(0) += imuTable->GetArray("Acc_X")->GetTuple1(row);
         avgAcc(1) += imuTable->GetArray("Acc_Y")->GetTuple1(row);
         avgAcc(2) += imuTable->GetArray("Acc_Z")->GetTuple1(row);
-        avgGyro(0) += Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
-        avgGyro(1) += Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
-        avgGyro(2) += Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
+        avgGyro(0) += -Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
+        avgGyro(1) += -Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
+        avgGyro(2) += -Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
         count++;
         row++;
       }
@@ -2412,9 +2412,9 @@ void vtkSlam::ComputeEgoMotion()
       double ry = -std::asin(Ir(2, 0));
       double rz = std::atan2(Ir(1, 0), Ir(0, 0));
 
-      ImuTrelative(0) = rx;
-      ImuTrelative(1) = ry;
-      ImuTrelative(2) = rz;
+      ImuTrelative(0) = rx* timeDiff;
+      ImuTrelative(1) = ry* timeDiff;
+      ImuTrelative(2) = rz* timeDiff;
 
       this->Trelative << ImuTrelative;
     }
@@ -2540,7 +2540,7 @@ void vtkSlam::ComputeEgoMotion()
     }
   }
 
-  /*if (!skipImu)
+  if (!skipImu)
   {
     Eigen::Vector3d Verror;
     Verror << ImuTrelative(3) - this->Trelative(3), ImuTrelative(4) - this->Trelative(4), ImuTrelative(5) - this->Trelative(5);
@@ -2549,9 +2549,9 @@ void vtkSlam::ComputeEgoMotion()
     std::cout << "verror: " << Verror.transpose() << std::endl;
     Verror /= timeDiff;
     std::cout << "verror: " << Verror.transpose() << std::endl;
-    this->Velocity -= (Verror * 0.5);
-  }*/
-  this->Trelative << ImuTrelative;
+    this->Velocity -= (Verror * 0.2);
+  }
+
   std::cout << "Trelative: " << this->Trelative.transpose() << std::endl;
   // Provide information about keypoints-neighborhood matching rejections
   this->RejectionInformationDisplay();
