@@ -67,6 +67,18 @@
         </Documentation>
       </DoubleVectorProperty>
 
+      <DoubleVectorProperty
+          name="Max distancefor matching"
+          command="SetMaxDistanceForICPMatching"
+          default_values="0.05"
+          number_of_elements="1" >
+        <Documentation>
+
+        </Documentation>
+      </DoubleVectorProperty>
+
+
+
 
       <!-- ==================== General ==================== -->
       <IntVectorProperty
