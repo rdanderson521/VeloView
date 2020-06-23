@@ -77,6 +77,16 @@
         </Documentation>
       </DoubleVectorProperty>
 
+      <IntVectorProperty
+          name="only imu"
+          command="SetOnlyImu"
+          default_values="0"
+          number_of_elements="1">
+        <BooleanDomain name="bool" />
+        <Documentation>
+        </Documentation>
+      </IntVectorProperty>
+
 
 
 

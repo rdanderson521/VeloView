@@ -1027,10 +1027,20 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
   this->ComputeKeyPoints(vtkCurrentFrame);
   StopTimeAndDisplay("Keypoints extraction");
 
-  // Perfom EgoMotion
-  InitTime();
-  this->ComputeEgoMotion();
-  StopTimeAndDisplay("Ego-Motion");
+  if (this->UsingImu)
+  {
+    // Perfom ImuMotion
+    InitTime();
+    this->ComputeImuMotion();
+    StopTimeAndDisplay("Imu-Motion");
+  }
+  else
+  {
+    // Perfom EgoMotion
+    InitTime();
+    this->ComputeEgoMotion();
+    StopTimeAndDisplay("Ego-Motion");
+  }
 
   // Transform the current keypoints to the
   // referential of the sensor at the end of
@@ -1040,9 +1050,13 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
   //StopTimeAndDisplay("Undistortion");
 
   // Perform Mapping
-  InitTime();
-  this->Mapping();
-  StopTimeAndDisplay("Mapping");
+  if (!this->OnlyImu)//for testing
+  {
+    InitTime();
+    this->Mapping();
+    StopTimeAndDisplay("Mapping");
+  }
+
 
   // Current keypoints become previous ones
   this->PreviousEdgesPoints = this->CurrentEdgesPoints;
@@ -2320,44 +2334,17 @@ void vtkSlam::GetMappingLineSpecificNeigbbor(std::vector<int>& nearestValid, std
 }
 
 //-----------------------------------------------------------------------------
-void vtkSlam::ComputeEgoMotion()
+void vtkSlam::ComputeImuMotion()
 {
-  // Check that there is enought points to compute the EgoMotion
-  if ((this->CurrentEdgesPoints->size() == 0 || this->PreviousEdgesPoints->size() == 0) &&
-      (this->CurrentPlanarsPoints->size() == 0 || this->PreviousPlanarsPoints->size() == 0))
-  {
-    this->FillEgoMotionInfoArrayWithDefaultValues();
-    vtkGenericWarningMacro("Not enought keypoints, EgoMotion skipped for this frame");
-    return;
-  }
-
-  // reset the relative transform
-  this->Trelative = Eigen::Matrix<double, 6, 1>::Zero();
-
-  // kd-tree to process fast nearest neighbor
-  // among the keypoints of the previous pointcloud
-  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousEdges(new pcl::KdTreeFLANN<Point>());
-  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousPlanes(new pcl::KdTreeFLANN<Point>());
-  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousBlobs(new pcl::KdTreeFLANN<Point>());
-  kdtreePreviousEdges->setInputCloud(this->PreviousEdgesPoints);
-  kdtreePreviousPlanes->setInputCloud(this->PreviousPlanarsPoints);
-  kdtreePreviousBlobs->setInputCloud(this->PreviousBlobsPoints);
-
-
   Eigen::Vector3d avgAcc;
   Eigen::Vector3d avgGyro;
   avgAcc << 0,0,0;
   avgGyro << 0,0,0;
   double timeDiff;
-  Eigen::Matrix<double, 6, 1> ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
+  this->ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
 
-  bool skipImu = true;
-
-  if (this->UsingImu)
+  if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
   {
-    if (this->CurrentFrameTime != this->PreviousFrameTime)
-    {
-      skipImu = false;
       int count = 0, row = this->ImuDataRow;
       while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->PreviousFrameTime)
       {
@@ -2384,41 +2371,72 @@ void vtkSlam::ComputeEgoMotion()
       avgGyro(2) /= count;
 
       timeDiff = (this->CurrentFrameTime - this->PreviousFrameTime) * 1e-6;
-
+      std::cout << "========== IMU-Motion ==========" << std::endl;
       std::cout << "Time: " << timeDiff << std::endl;
       std::cout << "row: " << row << std::endl;
       std::cout << "count: " << count << std::endl;
-      std::cout << "Gyro: " << avgGyro.transpose() << std::endl;
-      std::cout << "Acc: " << avgAcc.transpose() << std::endl;
-      //std::cout << "heading: " << this->Heading.transpose() << std::endl;
+      std::cout << "Gyro: " << avgGyro << std::endl;
+      std::cout << "Acc: " << avgAcc << std::endl;
+      std::cout << "Velocity: " << this->Velocity << std::endl;
 
-      std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
 
-      ImuTrelative(0) = avgGyro(0);
-      ImuTrelative(1) = avgGyro(1);
-      ImuTrelative(2) = avgGyro(2);
+      //angular velocity
+      Eigen::Matrix3d av;
+      av << 1, -avgGyro(2)*timeDiff, avgGyro(1)*timeDiff,
+            avgGyro(2)*timeDiff, 1, -avgGyro(0)*timeDiff,
+            -avgGyro(1)*timeDiff, avgGyro(0)*timeDiff, 1;
 
-      Eigen::Matrix3d Ir = GetRotationMatrix(ImuTrelative);
+      //linear velocity
+      Eigen::Vector3d lv;
+      lv << this->Velocity(0)+(0.5*avgAcc(0)*timeDiff),this->Velocity(1)+(0.5*avgAcc(1)*timeDiff),this->Velocity(2)+(0.5*avgAcc(2)*timeDiff);
 
-      Eigen::Vector3d Iv = Ir * (this->Velocity + (0.5 * avgAcc * timeDiff));
+      Eigen::Vector3d vdot;
+      vdot = av * lv;
 
-      ImuTrelative(3) = Iv(0) * timeDiff;
-      ImuTrelative(4) = Iv(1) * timeDiff;
-      ImuTrelative(5) = Iv(2) * timeDiff;
+      ImuTrelative << av(2,1), av(0,2), av(1,0), vdot(0)*timeDiff, vdot(1)*timeDiff, vdot(2)*timeDiff;
 
       this->Velocity += avgAcc * timeDiff;
 
-      double rx = std::atan2(Ir(2, 1), Ir(2, 2));
-      double ry = -std::asin(Ir(2, 0));
-      double rz = std::atan2(Ir(1, 0), Ir(0, 0));
+      double timeDiff = this->CurrentFrameTime - this->PreviousFrameTime;
+      Eigen::Vector3d Verror;
+      Verror << ImuTrelative(3) - this->Trelative(3), ImuTrelative(4) - this->Trelative(4), ImuTrelative(5) - this->Trelative(5);
+      std::cout << "timediff: " << timeDiff << std::endl;
 
-      ImuTrelative(0) = rx* timeDiff;
-      ImuTrelative(1) = ry* timeDiff;
-      ImuTrelative(2) = rz* timeDiff;
+      std::cout << "verror: " << Verror.transpose() << std::endl;
+      Verror /= timeDiff;
+      std::cout << "verror: " << Verror.transpose() << std::endl;
+      this->Velocity -= (Verror * 0.2);
 
       this->Trelative << ImuTrelative;
-    }
+
+      UpdateTworldUsingTrelative();
   }
+
+}
+
+//-----------------------------------------------------------------------------
+void vtkSlam::ComputeEgoMotion()
+{
+  // Check that there is enought points to compute the EgoMotion
+  if ((this->CurrentEdgesPoints->size() == 0 || this->PreviousEdgesPoints->size() == 0) &&
+      (this->CurrentPlanarsPoints->size() == 0 || this->PreviousPlanarsPoints->size() == 0))
+  {
+    this->FillEgoMotionInfoArrayWithDefaultValues();
+    vtkGenericWarningMacro("Not enought keypoints, EgoMotion skipped for this frame");
+    return;
+  }
+
+  // reset the relative transform
+  this->Trelative = Eigen::Matrix<double, 6, 1>::Zero();
+
+  // kd-tree to process fast nearest neighbor
+  // among the keypoints of the previous pointcloud
+  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousEdges(new pcl::KdTreeFLANN<Point>());
+  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousPlanes(new pcl::KdTreeFLANN<Point>());
+  pcl::KdTreeFLANN<Point>::Ptr kdtreePreviousBlobs(new pcl::KdTreeFLANN<Point>());
+  kdtreePreviousEdges->setInputCloud(this->PreviousEdgesPoints);
+  kdtreePreviousPlanes->setInputCloud(this->PreviousPlanarsPoints);
+  kdtreePreviousBlobs->setInputCloud(this->PreviousBlobsPoints);
 
   std::cout << "========== Ego-Motion ==========" << std::endl;
   std::cout << "previous <-> current edges : " << this->PreviousEdgesPoints->size() << " <-> " << this->CurrentEdgesPoints->size()
@@ -2538,18 +2556,6 @@ void vtkSlam::ComputeEgoMotion()
     {
       break;
     }
-  }
-
-  if (!skipImu)
-  {
-    Eigen::Vector3d Verror;
-    Verror << ImuTrelative(3) - this->Trelative(3), ImuTrelative(4) - this->Trelative(4), ImuTrelative(5) - this->Trelative(5);
-    std::cout << "timediff: " << timeDiff << std::endl;
-
-    std::cout << "verror: " << Verror.transpose() << std::endl;
-    Verror /= timeDiff;
-    std::cout << "verror: " << Verror.transpose() << std::endl;
-    this->Velocity -= (Verror * 0.2);
   }
 
   std::cout << "Trelative: " << this->Trelative.transpose() << std::endl;

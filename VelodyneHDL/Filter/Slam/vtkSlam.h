@@ -239,6 +239,10 @@ public:
   vtkGetMacro(MappingLineMaxDistInlier, double)
   vtkCustomSetMacro(MappingLineMaxDistInlier, double)
 
+  //for testing
+  vtkGetMacro(OnlyImu, bool)
+  vtkCustomSetMacro(OnlyImu, bool)
+
 protected:
   // vtkPolyDataAlgorithm functions
   vtkSlam();
@@ -501,6 +505,11 @@ private:
   // won't be reset.
   void PrepareDataForNextFrame();
 
+  // Find the motion meassured by the Imu
+  // sensors between the previous processed frame
+  // and the current frame
+  void ComputeImuMotion();
+
   // Find the ego motion of the sensor between
   // the current frame and the next one using
   // the keypoints extracted.
@@ -605,6 +614,9 @@ private:
   Eigen::Vector3d Heading; //RPY
   int ImuDataRow;
   double CurrentFrameTime, PreviousFrameTime;
+  Eigen::Matrix<double, 6, 1> ImuTrelative;
+
+  bool OnlyImu; //for testing
 };
 
 #endif // VTK_SLAM_H
