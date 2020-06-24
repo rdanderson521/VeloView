@@ -70,7 +70,7 @@
       <DoubleVectorProperty
           name="Max distancefor matching"
           command="SetMaxDistanceForICPMatching"
-          default_values="0.05"
+          default_values="0.01"
           number_of_elements="1" >
         <Documentation>
 

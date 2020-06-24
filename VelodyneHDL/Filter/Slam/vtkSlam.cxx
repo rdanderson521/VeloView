@@ -1034,9 +1034,10 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
     this->ComputeImuMotion();
     StopTimeAndDisplay("Imu-Motion");
   }
-  else
+
+  // Perfom EgoMotion
+  if (!this->OnlyImu)//for testing
   {
-    // Perfom EgoMotion
     InitTime();
     this->ComputeEgoMotion();
     StopTimeAndDisplay("Ego-Motion");
@@ -1811,7 +1812,7 @@ int vtkSlam::ComputeLineDistanceParameters(pcl::KdTreeFLANN<Point>::Ptr kdtreePr
 
   // if the nearest edges are too far from the
   // current edge keypoint we skip this point.
-  double distScale = sqrt(pow(p.x,2) + pow(p.y,2) + pow(p.z,2)) / this->MinDistanceToSensor;
+  double distScale = std::min(sqrt(pow(p.x,2) + pow(p.y,2) + pow(p.z,2)) / this->MinDistanceToSensor,10.0);
   if (nearestDist[requiredNearest - 1] > this->MaxDistanceForICPMatching * distScale)
   {
     return 1;
@@ -1990,7 +1991,7 @@ int vtkSlam::ComputePlaneDistanceParameters(pcl::KdTreeFLANN<Point>::Ptr kdtreeP
 
   // if the nearest planars are too far from the
   // current planar keypoint we skip this point.
-  double distScale = sqrt(pow(p.x,2) + pow(p.y,2) + pow(p.z,2)) / this->MinDistanceToSensor;
+  double distScale = std::min(sqrt(pow(p.x,2) + pow(p.y,2) + pow(p.z,2)) / this->MinDistanceToSensor,10.0);
   if (nearestDist[requiredNearest - 1] > this->MaxDistanceForICPMatching * distScale)
   {
     return 1;
@@ -2217,7 +2218,7 @@ void vtkSlam::GetEgoMotionLineSpecificNeighbor(std::vector<int>& nearestValid, s
   // get nearest neighbor of the query point
   std::vector<int> nearestIndex;
   std::vector<float> nearestDist;
-  kdtreePreviousEdges->nearestKSearch(p, nearestSearch, nearestIndex, nearestDist);
+  kdtreePreviousEdges->nearestKSearch(p, nearestSearch*2, nearestIndex, nearestDist);
 
   // take the closest point
   std::vector<int> idAlreadyTook(this->NLasers, 0);
@@ -2336,16 +2337,22 @@ void vtkSlam::GetMappingLineSpecificNeigbbor(std::vector<int>& nearestValid, std
 //-----------------------------------------------------------------------------
 void vtkSlam::ComputeImuMotion()
 {
-  Eigen::Vector3d avgAcc;
-  Eigen::Vector3d avgGyro;
+  Eigen::Vector3d avgAcc, Acc;
+  Eigen::Vector3d avgGyro, Gyro;
   avgAcc << 0,0,0;
   avgGyro << 0,0,0;
+  Acc << 0,0,0;
+  Gyro << 0,0,0;
   double timeDiff;
   this->ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
 
   if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
   {
       int count = 0, row = this->ImuDataRow;
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) > this->PreviousFrameTime && row > 0)
+      {
+        row--;
+      }
       while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->PreviousFrameTime)
       {
         row++;
@@ -2354,62 +2361,56 @@ void vtkSlam::ComputeImuMotion()
 
       while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->CurrentFrameTime)
       {
+        timeDiff = (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) - this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row -1));
+
         avgAcc(0) += imuTable->GetArray("Acc_X")->GetTuple1(row);
         avgAcc(1) += imuTable->GetArray("Acc_Y")->GetTuple1(row);
         avgAcc(2) += imuTable->GetArray("Acc_Z")->GetTuple1(row);
         avgGyro(0) += -Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
         avgGyro(1) += -Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
         avgGyro(2) += -Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
+
         count++;
         row++;
+
       }
-      avgAcc(0) /= count;
-      avgAcc(1) /= count;
-      avgAcc(2) /= count;
-      avgGyro(0) /= count;
-      avgGyro(1) /= count;
-      avgGyro(2) /= count;
+      avgAcc /= count;
+      avgGyro /= count;
 
       timeDiff = (this->CurrentFrameTime - this->PreviousFrameTime) * 1e-6;
       std::cout << "========== IMU-Motion ==========" << std::endl;
       std::cout << "Time: " << timeDiff << std::endl;
       std::cout << "row: " << row << std::endl;
       std::cout << "count: " << count << std::endl;
-      std::cout << "Gyro: " << avgGyro << std::endl;
-      std::cout << "Acc: " << avgAcc << std::endl;
-      std::cout << "Velocity: " << this->Velocity << std::endl;
+      std::cout << "Gyro: " << avgGyro.transpose() << std::endl;
+      std::cout << "Acc: " << avgAcc.transpose() << std::endl;
+      std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
 
 
+      Eigen::Matrix<double,6,1> GyroM;
+      GyroM << avgGyro,0,0,0;
       //angular velocity
-      Eigen::Matrix3d av;
-      av << 1, -avgGyro(2)*timeDiff, avgGyro(1)*timeDiff,
-            avgGyro(2)*timeDiff, 1, -avgGyro(0)*timeDiff,
-            -avgGyro(1)*timeDiff, avgGyro(0)*timeDiff, 1;
+      Eigen::Matrix3d av = GetRotationMatrix(GyroM*timeDiff);
 
       //linear velocity
       Eigen::Vector3d lv;
-      lv << this->Velocity(0)+(0.5*avgAcc(0)*timeDiff),this->Velocity(1)+(0.5*avgAcc(1)*timeDiff),this->Velocity(2)+(0.5*avgAcc(2)*timeDiff);
+      lv << (this->Velocity(0)+(0.5*avgAcc(0)*timeDiff))*timeDiff,
+      (this->Velocity(1)+(0.5*avgAcc(1)*timeDiff))*timeDiff,
+      (this->Velocity(2)+(0.5*avgAcc(2)*timeDiff))*timeDiff;
 
       Eigen::Vector3d vdot;
       vdot = av * lv;
 
-      ImuTrelative << av(2,1), av(0,2), av(1,0), vdot(0)*timeDiff, vdot(1)*timeDiff, vdot(2)*timeDiff;
+      ImuTrelative << (avgGyro*timeDiff), vdot(0), vdot(1), vdot(2);
 
       this->Velocity += avgAcc * timeDiff;
 
-      double timeDiff = this->CurrentFrameTime - this->PreviousFrameTime;
-      Eigen::Vector3d Verror;
-      Verror << ImuTrelative(3) - this->Trelative(3), ImuTrelative(4) - this->Trelative(4), ImuTrelative(5) - this->Trelative(5);
-      std::cout << "timediff: " << timeDiff << std::endl;
-
-      std::cout << "verror: " << Verror.transpose() << std::endl;
-      Verror /= timeDiff;
-      std::cout << "verror: " << Verror.transpose() << std::endl;
-      this->Velocity -= (Verror * 0.2);
-
       this->Trelative << ImuTrelative;
 
-      UpdateTworldUsingTrelative();
+      if (this->OnlyImu)
+      {
+        UpdateTworldUsingTrelative();
+      }
   }
 
 }
@@ -2427,7 +2428,14 @@ void vtkSlam::ComputeEgoMotion()
   }
 
   // reset the relative transform
-  this->Trelative = Eigen::Matrix<double, 6, 1>::Zero();
+  if (this->UsingImu)
+  {
+    this->Trelative = this->ImuTrelative;
+  }
+  else
+  {
+    this->Trelative = Eigen::Matrix<double, 6, 1>::Zero();
+  }
 
   // kd-tree to process fast nearest neighbor
   // among the keypoints of the previous pointcloud
@@ -2617,7 +2625,11 @@ void vtkSlam::Mapping()
   Point currentPoint;
   Eigen::MatrixXd estimatorCovariance(6, 6);
 
+  Eigen::Matrix<double, 6, 1> MappingTworld;
+  MappingTworld << this->Tworld;
+
   std::cout << "Mapping start Tworld: " << this->Tworld.transpose() << std::endl;
+
   // ICP - Levenberg-Marquardt loop:
   // At each step of this loop an ICP matching is performed
   // Once the keypoints matched, we estimate the the 6-DOF
@@ -2635,9 +2647,9 @@ void vtkSlam::Mapping()
     }
 
     // Rotation and position at this step
-    Eigen::Matrix3d R = GetRotationMatrix(this->Tworld);
+    Eigen::Matrix3d R = GetRotationMatrix(MappingTworld);
     Eigen::Vector3d T;
-    T << this->Tworld(3), this->Tworld(4), this->Tworld(5);
+    T << MappingTworld(3), MappingTworld(4), MappingTworld(5);
 
     // loop over edges
     for (unsigned int edgeIndex = 0; edgeIndex < this->CurrentEdgesPoints->size(); ++edgeIndex)
@@ -2708,14 +2720,14 @@ void vtkSlam::Mapping()
                                               new CostFunctions::MahalanobisDistanceLinearDistortionResidual(
                                                 this->Avalues[k], this->Pvalues[k], this->Xvalues[k], T0, R0,
                                                 this->TimeValues[k], this->residualCoefficient[k]));
-        problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), this->Tworld.data());
+        problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), MappingTworld.data());
       }
       else
       {
         ceres::CostFunction* cost_function = new ceres::AutoDiffCostFunction<CostFunctions::MahalanobisDistanceAffineIsometryResidual, 1, 6>(
                                              new CostFunctions::MahalanobisDistanceAffineIsometryResidual(this->Avalues[k], this->Pvalues[k],
                                                                                                           this->Xvalues[k], this->residualCoefficient[k]));
-        problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), this->Tworld.data());
+        problem.AddResidualBlock(cost_function, new ceres::ArctanLoss(2.0), MappingTworld.data());
       }
     }
 
@@ -2744,21 +2756,35 @@ void vtkSlam::Mapping()
       // Computation of the variance-covariance matrix
       ceres::Covariance covariance(covOptions);
       std::vector<std::pair<const double*, const double* > > covariance_blocks;
-      covariance_blocks.push_back(std::make_pair(this->Tworld.data(), this->Tworld.data()));
+      covariance_blocks.push_back(std::make_pair(MappingTworld.data(), MappingTworld.data()));
       covariance.Compute(covariance_blocks, &problem);
       double covarianceMat[6 * 6];
-      covariance.GetCovarianceBlock(this->Tworld.data(), this->Tworld.data(), covarianceMat);
+      covariance.GetCovarianceBlock(MappingTworld.data(), MappingTworld.data(), covarianceMat);
       for (int i = 0; i < 6; ++i)
         for (int j = 0; j < 6; ++j)
           estimatorCovariance(i, j) = covarianceMat[i + 6 * j];
       break;
       }
 
-      std::cout << "Mapping ICP: " << icpCount << " Tworld: " << this->Tworld.transpose() << std::endl;
+      //std::cout << "Mapping ICP: " << icpCount << " Tworld: " << MappingTworld.transpose() << std::endl;
   }
 
-  std::cout << "Mapping end Tworld: " << this->Tworld.transpose() << std::endl;
+  Eigen::Vector3d imuT;
+  imuT << this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
 
+  imuT = GetRotationMatrix(this->PreviousTworld) * imuT;
+
+  Eigen::Matrix<double, 6, 1> imuRel = this->ImuTrelative;
+  imuRel(3) = imuT(0);
+  imuRel(4) = imuT(1);
+  imuRel(5) = imuT(2);
+
+  std::cout << "IMU motion:      " << imuRel.transpose() << std::endl;
+  std::cout << "Mapping changes: " << (MappingTworld - this->Tworld).transpose() << std::endl;
+  std::cout << "Tworld:          " << this->Tworld.transpose() << std::endl;
+  std::cout << "Mapping Tworld:  " << MappingTworld.transpose() << std::endl;
+
+  this->Tworld << MappingTworld;
   // Provide information about keypoints-neighborhood matching rejections
   this->RejectionInformationDisplay();
 
@@ -2775,6 +2801,7 @@ void vtkSlam::Mapping()
             << " edges: " << usedEdges << " planes: " << usedPlanes << " blobs: " << usedBlobs << std::endl;
   std::cout << "Covariance Eigen values: " << D.transpose() << std::endl;
   std::cout << "Maximum variance: " << D(5) << std::endl;
+
 
   // Add the current computed transform to the list
   this->TworldList.push_back(this->Tworld);

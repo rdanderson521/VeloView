@@ -143,6 +143,9 @@ vvPlayerControlsToolbar::vvPlayerControlsToolbar(QWidget* parentObject)
   this->UI->speedFactor.append(qMakePair(10.,  QString("x 10")));
   this->UI->speedFactor.append(qMakePair(20.,  QString("x 20")));
   this->UI->speedFactor.append(qMakePair(100., QString("x100")));
+  this->UI->speedFactor.append(qMakePair(250., QString("x250")));
+  this->UI->speedFactor.append(qMakePair(500., QString("x500")));
+  this->UI->speedFactor.append(qMakePair(1000., QString("x1000")));
 
   // add the widget to the toolbar
   this->addWidget(new QLabel("Speed:", this));
@@ -384,4 +387,3 @@ vtkSMProxy* vvPlayerControlsToolbar::timeKeeper() const
 {
   return vtkSMPropertyHelper(this->Controller->getAnimationScene()->getProxy(), "TimeKeeper").GetAsProxy();
 }
-
