@@ -143,7 +143,7 @@ vvPlayerControlsToolbar::vvPlayerControlsToolbar(QWidget* parentObject)
   this->UI->speedFactor.append(qMakePair(10.,  QString("x 10")));
   this->UI->speedFactor.append(qMakePair(20.,  QString("x 20")));
   this->UI->speedFactor.append(qMakePair(100., QString("x100")));
-  this->UI->speedFactor.append(qMakePair(250., QString("x250")));
+  this->UI->speedFactor.append(qMakePair(250., QString("x200")));
   this->UI->speedFactor.append(qMakePair(500., QString("x500")));
   this->UI->speedFactor.append(qMakePair(1000., QString("x1000")));
 

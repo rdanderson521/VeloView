@@ -57,9 +57,31 @@
       <!-- =================== IMU parameters ===========-->
 
       <DoubleVectorProperty
-          name="Initial Velocity"
-          command="SetInitialVelocity"
+          name="Initial Velocity x"
+          command="SetInitialVelocityX"
+          default_values="0"
+          number_of_elements="1" >
+        <Documentation>
+          A Rough estimate of the initial velocity of the scanner
+          on its current heading (m/s)
+        </Documentation>
+      </DoubleVectorProperty>
+
+      <DoubleVectorProperty
+          name="Initial Velocity Y"
+          command="SetInitialVelocityY"
           default_values="9"
+          number_of_elements="1" >
+        <Documentation>
+          A Rough estimate of the initial velocity of the scanner
+          on its current heading (m/s)
+        </Documentation>
+      </DoubleVectorProperty>
+
+      <DoubleVectorProperty
+          name="Initial Velocity"
+          command="SetInitialVelocityZ"
+          default_values="0"
           number_of_elements="1" >
         <Documentation>
           A Rough estimate of the initial velocity of the scanner

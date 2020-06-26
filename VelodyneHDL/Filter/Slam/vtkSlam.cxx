@@ -639,7 +639,7 @@ vtkInformationVector **inputVector, vtkInformationVector *outputVector)
       this->UsingImu = true;
       this->ImuData = vtkTable::GetData(inputVector[2]->GetInformationObject(0));
       this->ImuDataRow = 0;
-      this->Velocity << 0,this->InitialVelocity,0;
+      this->Velocity << this->InitialVelocityX, this->InitialVelocityY, this->InitialVelocityZ;
       this->Heading << 0,0,0;
     }
   }
@@ -770,6 +770,8 @@ void vtkSlam::Reset()
   CreateDataArray<vtkIntArray>("EgoMotion: edges used", 0, this->Trajectory);
   CreateDataArray<vtkIntArray>("EgoMotion: planes used", 0, this->Trajectory);
   CreateDataArray<vtkIntArray>("EgoMotion: total keypoints used", 0, this->Trajectory);
+
+  this->ImuConfidence << 0.95, 0.995 ,0.8, 0.65, 0.65, 0.8;
 }
 
 //-----------------------------------------------------------------------------
@@ -1748,7 +1750,7 @@ int vtkSlam::ComputeLineDistanceParameters(pcl::KdTreeFLANN<Point>::Ptr kdtreePr
 
   if (step == "egoMotion")
   {
-    requiredNearest = this->EgoMotionLineDistanceNbrNeighbors;
+    requiredNearest = 2;//this->EgoMotionLineDistanceNbrNeighbors;
     eigenValuesRatio = this->EgoMotionLineDistancefactor;
     maxDist = std::pow(this->EgoMotionMaxLineDistance, 2);
   }
@@ -2361,14 +2363,13 @@ void vtkSlam::ComputeImuMotion()
 
       while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->CurrentFrameTime)
       {
-        timeDiff = (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) - this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row -1));
 
         avgAcc(0) += imuTable->GetArray("Acc_X")->GetTuple1(row);
         avgAcc(1) += imuTable->GetArray("Acc_Y")->GetTuple1(row);
         avgAcc(2) += imuTable->GetArray("Acc_Z")->GetTuple1(row);
-        avgGyro(0) += -Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
-        avgGyro(1) += -Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
-        avgGyro(2) += -Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
+        avgGyro(0) += Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));
+        avgGyro(1) += Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));
+        avgGyro(2) += Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));
 
         count++;
         row++;
@@ -2377,37 +2378,71 @@ void vtkSlam::ComputeImuMotion()
       avgAcc /= count;
       avgGyro /= count;
 
+      Eigen::Matrix<double, 6, 1> calib;
+      calib << 0, 0, 0, 0, 0, 0;
+      Eigen::Matrix3d calibR = GetRotationMatrix(calib);
+
       timeDiff = (this->CurrentFrameTime - this->PreviousFrameTime) * 1e-6;
+
+      //adjust gyro
+      Eigen::Vector3d avgGyroC;// = calibR * avgGyro;
+      avgGyroC << avgGyro(1), avgGyro(0), -avgGyro(2);
+
+      //anglular change
+      Eigen::Vector3d angularChangeC = avgGyroC*timeDiff;
+
+      //angular change matrix
+      Eigen::Matrix<double,6,1> angularCM;
+      angularCM << angularChangeC,0,0,0;
+
+      //Angle change rotation matrix
+      Eigen::Matrix3d angularRotationCM = GetRotationMatrix(angularCM);
+
+      // Angle change rotation matrix calibrated0
+
+      // acceleration calibrated
+      Eigen::Vector3d avgAccC;// = calibR * avgAcc;
+      avgAccC << avgAcc(1), avgAcc(0), -avgAcc(2);
+
+      // velocity change
+      Eigen::Vector3d velocityChange = avgAccC * timeDiff;
+
+      //linear velocity
+      Eigen::Vector3d linearChange = (this->Velocity + (velocityChange * 0.5)) * timeDiff;
+      this->Velocity += velocityChange;
+
+      Eigen::Vector3d transform;
+      transform = angularRotationCM * linearChange;
+
+      double rx = std::atan2(angularRotationCM(2, 1), angularRotationCM(2, 2));
+      double ry = -std::asin(angularRotationCM(2, 0));
+      double rz = std::atan2(angularRotationCM(1, 0), angularRotationCM(0, 0));
+
+      this->ImuTrelative << rx, ry, rz, transform;
+
+      this->Trelative << ImuTrelative;
+
+      this->ImuVariation << abs(this->ImuTrelative(0) * (1 - this->ImuConfidence(0))),
+        abs(this->ImuTrelative(1) * (1 - this->ImuConfidence(1))),
+        abs(this->ImuTrelative(2) * (1 - this->ImuConfidence(2))),
+        abs(this->ImuTrelative(3) * (1 - this->ImuConfidence(3))),
+        abs(this->ImuTrelative(4) * (1 - this->ImuConfidence(4))),
+        abs(this->ImuTrelative(5) * (1 - this->ImuConfidence(5)));
+      std::cout << "ImuVariation: " << this->ImuVariation.transpose() << std::endl;
+
+
       std::cout << "========== IMU-Motion ==========" << std::endl;
       std::cout << "Time: " << timeDiff << std::endl;
       std::cout << "row: " << row << std::endl;
       std::cout << "count: " << count << std::endl;
       std::cout << "Gyro: " << avgGyro.transpose() << std::endl;
+      std::cout << "GyroC: " << avgGyroC.transpose() << std::endl;
+      //std::cout << "angularChangeC: " << angularChangeC.transpose() << std::endl;
       std::cout << "Acc: " << avgAcc.transpose() << std::endl;
+      std::cout << "AccC: " << avgAccC.transpose() << std::endl;
       std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
 
-
-      Eigen::Matrix<double,6,1> GyroM;
-      GyroM << avgGyro,0,0,0;
-      //angular velocity
-      Eigen::Matrix3d av = GetRotationMatrix(GyroM*timeDiff);
-
-      //linear velocity
-      Eigen::Vector3d lv;
-      lv << (this->Velocity(0)+(0.5*avgAcc(0)*timeDiff))*timeDiff,
-      (this->Velocity(1)+(0.5*avgAcc(1)*timeDiff))*timeDiff,
-      (this->Velocity(2)+(0.5*avgAcc(2)*timeDiff))*timeDiff;
-
-      Eigen::Vector3d vdot;
-      vdot = av * lv;
-
-      ImuTrelative << (avgGyro*timeDiff), vdot(0), vdot(1), vdot(2);
-
-      this->Velocity += avgAcc * timeDiff;
-
-      this->Trelative << ImuTrelative;
-
-      if (this->OnlyImu)
+      if (this->OnlyImu) //for testing only
       {
         UpdateTworldUsingTrelative();
       }
@@ -2428,7 +2463,7 @@ void vtkSlam::ComputeEgoMotion()
   }
 
   // reset the relative transform
-  if (this->UsingImu)
+  if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
   {
     this->Trelative = this->ImuTrelative;
   }
@@ -2566,7 +2601,6 @@ void vtkSlam::ComputeEgoMotion()
     }
   }
 
-  std::cout << "Trelative: " << this->Trelative.transpose() << std::endl;
   // Provide information about keypoints-neighborhood matching rejections
   this->RejectionInformationDisplay();
 
@@ -2578,6 +2612,47 @@ void vtkSlam::ComputeEgoMotion()
   // Integrate the relative motion
   // to the world transformation
 
+  if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
+  {
+
+    // ensures change made by SLAM is within its limits set by the IMU confidence levels
+    for (int i = 0; i < this->Trelative.rows(); i++)
+    {
+      if (this->Trelative(i) < this->ImuTrelative(i) - this->ImuVariation(i))
+      {
+        this->Trelative(i) = this->ImuTrelative(i) - this->ImuVariation(i);
+        std::cout << "Correction limit hit on: " << i << std::endl;
+      }
+      else if (this->Trelative(i) > this->ImuTrelative(i) + this->ImuVariation(i))
+      {
+        this->Trelative(i) = this->ImuTrelative(i) + this->ImuVariation(i);
+        std::cout << "Correction limit hit on: " << i << std::endl;
+      }
+    }
+
+    //Velocity error correction
+    Eigen::Matrix3d Trr = GetRotationMatrix(this->Trelative);
+    Eigen::Vector3d Trt;
+    Trt <<  this->Trelative(3), this->Trelative(4), this->Trelative(5);
+
+    Eigen::Vector3d TrLinearDist = Trr.transpose() * Trt;
+
+    Eigen::Matrix3d Imur = GetRotationMatrix(this->ImuTrelative);
+    Eigen::Vector3d Imut;
+    Imut <<  this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
+
+    Eigen::Vector3d ImuLinearDist = Imur.transpose() * Imut;
+
+    Eigen::Vector3d ErrorDist = TrLinearDist - ImuLinearDist;
+
+    double timeDiff = this->CurrentFrameTime - this->PreviousFrameTime;
+
+    Eigen::Vector3d ErrorVelocity = ErrorDist/timeDiff;
+
+    this->Velocity -= 0.5 * ErrorVelocity;
+
+  }
+
   this->UpdateTworldUsingTrelative();
 }
 
@@ -2585,7 +2660,7 @@ void vtkSlam::ComputeEgoMotion()
 void vtkSlam::Mapping()
 {
   // Check that there is enought points to compute the EgoMotion
-  if (this->CurrentEdgesPoints->size() == 0 && this->CurrentPlanarsPoints->size() == 0)
+  if (this->CurrentEdgesPoints->size() == 0 && this->CurrentPlanarsPoints->size() == 0 || true)
   {
     this->FillMappingInfoArrayWithDefaultValues();
     // update maps

@@ -87,7 +87,7 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 
-#include "KalmanFilter.h"
+//#include "KalmanFilter.h"
 #include "vtkTemporalTransforms.h"
 
 // This custom macro is needed to make the SlamManager time agnostic
@@ -129,10 +129,6 @@ public:
 
   // Get the computed world transform so far
   void GetWorldTransform(double* Tworld);
-
-  // Get/Set Imu
-  vtkGetMacro(InitialVelocity, double)
-  vtkCustomSetMacro(InitialVelocity, double)
 
   // Get/Set General
   vtkGetMacro(DisplayMode, bool)
@@ -238,6 +234,17 @@ public:
 
   vtkGetMacro(MappingLineMaxDistInlier, double)
   vtkCustomSetMacro(MappingLineMaxDistInlier, double)
+
+
+  // Get/Set Imu
+  vtkGetMacro(InitialVelocityX, double)
+  vtkCustomSetMacro(InitialVelocityX, double)
+
+  vtkGetMacro(InitialVelocityY, double)
+  vtkCustomSetMacro(InitialVelocityY, double)
+
+  vtkGetMacro(InitialVelocityZ, double)
+  vtkCustomSetMacro(InitialVelocityZ, double)
 
   //for testing
   vtkGetMacro(OnlyImu, bool)
@@ -607,7 +614,7 @@ private:
   Eigen::Matrix<double, 6, 6> I6 = Eigen::Matrix<double, 6, 6>::Identity();
 
   //Imu
-  double InitialVelocity;
+  double InitialVelocityX, InitialVelocityY, InitialVelocityZ;
   Eigen::Vector3d Velocity; //XYZ
   bool UsingImu;
   vtkTable* ImuData;
@@ -615,6 +622,8 @@ private:
   int ImuDataRow;
   double CurrentFrameTime, PreviousFrameTime;
   Eigen::Matrix<double, 6, 1> ImuTrelative;
+  Eigen::Matrix<double, 6, 1> ImuConfidence;
+  Eigen::Matrix<double, 6, 1> ImuVariation;
 
   bool OnlyImu; //for testing
 };
