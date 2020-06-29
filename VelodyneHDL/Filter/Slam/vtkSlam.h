@@ -516,6 +516,7 @@ private:
   // sensors between the previous processed frame
   // and the current frame
   void ComputeImuMotion();
+  void ComputeImuMotionTest();
 
   // Find the ego motion of the sensor between
   // the current frame and the next one using

@@ -1033,7 +1033,7 @@ void vtkSlam::AddFrame(vtkPolyData* newFrame)
   {
     // Perfom ImuMotion
     InitTime();
-    this->ComputeImuMotion();
+    this->ComputeImuMotionTest();
     StopTimeAndDisplay("Imu-Motion");
   }
 
@@ -2440,6 +2440,174 @@ void vtkSlam::ComputeImuMotion()
       //std::cout << "angularChangeC: " << angularChangeC.transpose() << std::endl;
       std::cout << "Acc: " << avgAcc.transpose() << std::endl;
       std::cout << "AccC: " << avgAccC.transpose() << std::endl;
+      std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
+
+      if (this->OnlyImu) //for testing only
+      {
+        UpdateTworldUsingTrelative();
+      }
+  }
+
+}
+
+
+void vtkSlam::ComputeImuMotionTest()
+{
+  Eigen::Vector3d avgAcc, Acc;
+  Eigen::Vector3d avgGyro, Gyro;
+  avgAcc << 0,0,0;
+  avgGyro << 0,0,0;
+  Acc << 0,0,0;
+  Gyro << 0,0,0;
+  double timeDiff;
+  this->ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
+
+  if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
+  {
+      int count = 0, row = this->ImuDataRow;
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) > this->PreviousFrameTime && row > 0)
+      {
+        row--;
+      }
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->PreviousFrameTime)
+      {
+        row++;
+      }
+      auto imuTable = this->ImuData->GetRowData();
+
+      while (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) <= this->CurrentFrameTime)
+      {
+        timeDiff = (this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row) - this->ImuData->GetRowData()->GetArray("adjustedtime")->GetTuple1(row - 1)) * 1e-6;
+        Acc(0) = (imuTable->GetArray("Acc_X")->GetTuple1(row) + imuTable->GetArray("Acc_X")->GetTuple1(row - 1)) / 2;
+        Acc(1) = (imuTable->GetArray("Acc_Y")->GetTuple1(row) + imuTable->GetArray("Acc_Y")->GetTuple1(row - 1)) / 2;
+        Acc(2) = (imuTable->GetArray("Acc_Z")->GetTuple1(row) + imuTable->GetArray("Acc_Z")->GetTuple1(row - 1)) / 2;
+        Gyro(0) = Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row) + imuTable->GetArray("Gyro_X")->GetTuple1(row - 1) / 2);
+        Gyro(1) = Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row) + imuTable->GetArray("Gyro_Y")->GetTuple1(row - 1) / 2);
+        Gyro(2) = Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row) + imuTable->GetArray("Gyro_Z")->GetTuple1(row - 1) / 2);
+
+        Eigen::Vector3d AccC;// = calibR * avgAcc;
+        //AccC << Acc(0), -Acc(1), -Acc(2);
+        AccC << Acc;
+
+        Eigen::Vector3d GyroC;// = calibR * avgGyro;
+        //GyroC << Gyro(0), -Gyro(1), -Gyro(2);
+        GyroC << Gyro;
+
+        //anglular change
+        Eigen::Vector3d angularChangeC = GyroC*timeDiff;
+
+        //angular change matrix
+        Eigen::Matrix<double,6,1> angularCM;
+        angularCM << angularChangeC,0,0,0;
+
+        //Angle change rotation matrix
+        Eigen::Matrix3d angularRotationCM = GetRotationMatrix(angularCM);
+
+        Eigen::Matrix3d ImuTrRotationM = GetRotationMatrix(this->ImuTrelative);
+
+        Eigen::Matrix3d newImuTrRotation = ImuTrRotationM * angularRotationCM;
+
+        double rx = std::atan2(newImuTrRotation(2, 1), newImuTrRotation(2, 2));
+        double ry = -std::asin(newImuTrRotation(2, 0));
+        double rz = std::atan2(newImuTrRotation(1, 0), newImuTrRotation(0, 0));
+
+
+        Eigen::Vector3d velocityChange =  AccC * timeDiff;
+
+        //linear velocity
+        Eigen::Vector3d linearChange = (this->Velocity + (velocityChange * 0.5)) * timeDiff;
+        this->Velocity += velocityChange;
+
+        Eigen::Vector3d transform;
+        transform = angularRotationCM * linearChange;
+
+        Eigen::Vector3d ImuTrTransform;
+        ImuTrTransform << this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
+
+        Eigen::Vector3d newImuTrTransform = (ImuTrRotationM * transform) + ImuTrTransform;
+
+        this->ImuTrelative << rx, ry, rz, newImuTrTransform;
+
+        /*std::cout << "//////////////////////////////////////////////" << std::endl;
+        std::cout << "Time: " << timeDiff << std::endl;
+        std::cout << "row: " << row << std::endl;
+        std::cout << "count: " << count << std::endl;
+        std::cout << "Gyro: " << Gyro.transpose() << std::endl;
+        std::cout << "GyroC: " << GyroC.transpose() << std::endl;
+        std::cout << "angularChangeC: " << angularChangeC.transpose() << std::endl;
+        std::cout << "Acc: " << Acc.transpose() << std::endl;
+        std::cout << "AccC: " << AccC.transpose() << std::endl;
+        std::cout << "linearChangeC: " << linearChange.transpose() << std::endl;*/
+
+        //count++;
+        row++;
+
+      }
+      //avgAcc /= count;
+      //avgGyro /= count;
+
+      //Eigen::Matrix<double, 6, 1> calib;
+      //calib << 0, 0, 0, 0, 0, 0;
+      //Eigen::Matrix3d calibR = GetRotationMatrix(calib);
+
+      //timeDiff = (this->CurrentFrameTime - this->PreviousFrameTime) * 1e-6;
+
+      //adjust gyro
+      //Eigen::Vector3d avgGyroC;// = calibR * avgGyro;
+      //avgGyroC << avgGyro(1), avgGyro(0), -avgGyro(2);
+
+      //anglular change
+      //Eigen::Vector3d angularChangeC = avgGyroC*timeDiff;
+
+      //angular change matrix
+      //Eigen::Matrix<double,6,1> angularCM;
+      //angularCM << angularChangeC,0,0,0;
+
+      //Angle change rotation matrix
+      //Eigen::Matrix3d angularRotationCM = GetRotationMatrix(angularCM);
+
+      // Angle change rotation matrix calibrated0
+
+      // acceleration calibrated
+      //Eigen::Vector3d avgAccC;// = calibR * avgAcc;
+      //avgAccC << avgAcc(1), avgAcc(0), -avgAcc(2);
+
+      // velocity change
+      //Eigen::Vector3d velocityChange = avgAccC * timeDiff;
+
+      //linear velocity
+      //Eigen::Vector3d linearChange = (this->Velocity + (velocityChange * 0.5)) * timeDiff;
+      //this->Velocity += velocityChange;
+
+      //Eigen::Vector3d transform;
+      //transform = angularRotationCM * linearChange;
+
+      /*double rx = std::atan2(angularRotationCM(2, 1), angularRotationCM(2, 2));
+      double ry = -std::asin(angularRotationCM(2, 0));
+      double rz = std::atan2(angularRotationCM(1, 0), angularRotationCM(0, 0));*/
+
+      //this->ImuTrelative << rx, ry, rz, transform;
+
+      this->Trelative << ImuTrelative;
+
+      this->ImuVariation << abs(this->ImuTrelative(0) * (1 - this->ImuConfidence(0))),
+        abs(this->ImuTrelative(1) * (1 - this->ImuConfidence(1))),
+        abs(this->ImuTrelative(2) * (1 - this->ImuConfidence(2))),
+        abs(this->ImuTrelative(3) * (1 - this->ImuConfidence(3))),
+        abs(this->ImuTrelative(4) * (1 - this->ImuConfidence(4))),
+        abs(this->ImuTrelative(5) * (1 - this->ImuConfidence(5)));
+      std::cout << "ImuVariation: " << this->ImuVariation.transpose() << std::endl;
+
+
+      std::cout << "========== IMU-Motion ==========" << std::endl;
+      std::cout << "Time: " << timeDiff << std::endl;
+      std::cout << "row: " << row << std::endl;
+      std::cout << "count: " << count << std::endl;
+      //std::cout << "Gyro: " << avgGyro.transpose() << std::endl;
+      //std::cout << "GyroC: " << avgGyroC.transpose() << std::endl;
+      //std::cout << "angularChangeC: " << angularChangeC.transpose() << std::endl;
+      //std::cout << "Acc: " << avgAcc.transpose() << std::endl;
+      //std::cout << "AccC: " << avgAccC.transpose() << std::endl;
       std::cout << "Velocity: " << this->Velocity.transpose() << std::endl;
 
       if (this->OnlyImu) //for testing only
