@@ -2462,6 +2462,7 @@ void vtkSlam::ComputeImuMotionTest()
   double timeDiff;
   this->ImuTrelative = Eigen::Matrix<double, 6, 1>::Zero();
 
+
   if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
   {
       int count = 0, row = this->ImuDataRow;
@@ -2481,13 +2482,13 @@ void vtkSlam::ComputeImuMotionTest()
         Acc(0) = (imuTable->GetArray("Acc_X")->GetTuple1(row) + imuTable->GetArray("Acc_X")->GetTuple1(row - 1)) / 2;
         Acc(1) = (imuTable->GetArray("Acc_Y")->GetTuple1(row) + imuTable->GetArray("Acc_Y")->GetTuple1(row - 1)) / 2;
         Acc(2) = (imuTable->GetArray("Acc_Z")->GetTuple1(row) + imuTable->GetArray("Acc_Z")->GetTuple1(row - 1)) / 2;
-        Gyro(0) = Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row) + imuTable->GetArray("Gyro_X")->GetTuple1(row - 1) / 2);
-        Gyro(1) = Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row) + imuTable->GetArray("Gyro_Y")->GetTuple1(row - 1) / 2);
-        Gyro(2) = Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row) + imuTable->GetArray("Gyro_Z")->GetTuple1(row - 1) / 2);
+        Gyro(0) = Deg2Rad(imuTable->GetArray("Gyro_X")->GetTuple1(row));// + imuTable->GetArray("Gyro_X")->GetTuple1(row - 1) / 2);
+        Gyro(1) = Deg2Rad(imuTable->GetArray("Gyro_Y")->GetTuple1(row));// + imuTable->GetArray("Gyro_Y")->GetTuple1(row - 1) / 2);
+        Gyro(2) = Deg2Rad(imuTable->GetArray("Gyro_Z")->GetTuple1(row));// + imuTable->GetArray("Gyro_Z")->GetTuple1(row - 1) / 2);
 
         Eigen::Vector3d AccC;// = calibR * avgAcc;
         //AccC << Acc(0), -Acc(1), -Acc(2);
-        AccC << Acc;
+        //AccC << Acc;
 
         Eigen::Vector3d GyroC;// = calibR * avgGyro;
         //GyroC << Gyro(0), -Gyro(1), -Gyro(2);
@@ -2512,7 +2513,13 @@ void vtkSlam::ComputeImuMotionTest()
         double rz = std::atan2(newImuTrRotation(1, 0), newImuTrRotation(0, 0));
 
 
-        Eigen::Vector3d velocityChange =  AccC * timeDiff;
+
+
+        AccC << ((Acc(0) * sin(angularChangeC(2))) + (Acc(1) * (cos(angularChangeC(2)) - 1 )))/GyroC(2),//((Acc(0) * sin(angularChangeC(2))) + (Acc(1) * (1 - cos(angularChangeC(2)))))/GyroC(2),
+                0,//((Acc(0) * (1-cos(angularChangeC(2)))) + (Acc(1) * sin(angularChangeC(2))))/GyroC(2),
+                0;//Acc(2) * timeDiff;
+
+        Eigen::Vector3d velocityChange =  AccC;// * timeDiff;
 
         //linear velocity
         Eigen::Vector3d linearChange = (this->Velocity + (velocityChange * 0.5)) * timeDiff;
@@ -2543,50 +2550,6 @@ void vtkSlam::ComputeImuMotionTest()
         row++;
 
       }
-      //avgAcc /= count;
-      //avgGyro /= count;
-
-      //Eigen::Matrix<double, 6, 1> calib;
-      //calib << 0, 0, 0, 0, 0, 0;
-      //Eigen::Matrix3d calibR = GetRotationMatrix(calib);
-
-      //timeDiff = (this->CurrentFrameTime - this->PreviousFrameTime) * 1e-6;
-
-      //adjust gyro
-      //Eigen::Vector3d avgGyroC;// = calibR * avgGyro;
-      //avgGyroC << avgGyro(1), avgGyro(0), -avgGyro(2);
-
-      //anglular change
-      //Eigen::Vector3d angularChangeC = avgGyroC*timeDiff;
-
-      //angular change matrix
-      //Eigen::Matrix<double,6,1> angularCM;
-      //angularCM << angularChangeC,0,0,0;
-
-      //Angle change rotation matrix
-      //Eigen::Matrix3d angularRotationCM = GetRotationMatrix(angularCM);
-
-      // Angle change rotation matrix calibrated0
-
-      // acceleration calibrated
-      //Eigen::Vector3d avgAccC;// = calibR * avgAcc;
-      //avgAccC << avgAcc(1), avgAcc(0), -avgAcc(2);
-
-      // velocity change
-      //Eigen::Vector3d velocityChange = avgAccC * timeDiff;
-
-      //linear velocity
-      //Eigen::Vector3d linearChange = (this->Velocity + (velocityChange * 0.5)) * timeDiff;
-      //this->Velocity += velocityChange;
-
-      //Eigen::Vector3d transform;
-      //transform = angularRotationCM * linearChange;
-
-      /*double rx = std::atan2(angularRotationCM(2, 1), angularRotationCM(2, 2));
-      double ry = -std::asin(angularRotationCM(2, 0));
-      double rz = std::atan2(angularRotationCM(1, 0), angularRotationCM(0, 0));*/
-
-      //this->ImuTrelative << rx, ry, rz, transform;
 
       this->Trelative << ImuTrelative;
 
@@ -3008,24 +2971,83 @@ void vtkSlam::Mapping()
           estimatorCovariance(i, j) = covarianceMat[i + 6 * j];
       break;
       }
-
-      //std::cout << "Mapping ICP: " << icpCount << " Tworld: " << MappingTworld.transpose() << std::endl;
   }
 
-  Eigen::Vector3d imuT;
-  imuT << this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
+  Eigen::Vector3d imuTr;
+  imuTr << this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
 
-  imuT = GetRotationMatrix(this->PreviousTworld) * imuT;
+  Eigen::Vector3d TworldVec;
+  TworldVec << this->Tworld(3), this->Tworld(4), this->Tworld(5);
+
+  Eigen::Vector3d imuTw = GetRotationMatrix(this->PreviousTworld) * imuTr + TworldVec;
 
   Eigen::Matrix<double, 6, 1> imuRel = this->ImuTrelative;
-  imuRel(3) = imuT(0);
-  imuRel(4) = imuT(1);
-  imuRel(5) = imuT(2);
+  Eigen::Matrix3d imuRelRotationMat = GetRotationMatrix(imuRel);
 
-  std::cout << "IMU motion:      " << imuRel.transpose() << std::endl;
-  std::cout << "Mapping changes: " << (MappingTworld - this->Tworld).transpose() << std::endl;
+  Eigen::Matrix3d prevWorldRotationMat = GetRotationMatrix(this->PreviousTworld);
+
+  Eigen::Matrix3d imuWorldRotationMat = prevWorldRotationMat * imuRelRotationMat;
+
+  double rx = std::atan2(imuWorldRotationMat(2, 1), imuWorldRotationMat(2, 2));
+  double ry = -std::asin(imuWorldRotationMat(2, 0));
+  double rz = std::atan2(imuWorldRotationMat(1, 0), imuWorldRotationMat(0, 0));
+
+  Eigen::Matrix<double, 6, 1> imuWorld;
+  imuWorld << rx, ry, rz, imuTw(0), imuTw(1), imuTw(2);
+
+  std::cout << "IMU rel:         " <<  this->ImuTrelative.transpose() << std::endl;
+  std::cout << "IMU Tworld:      " << imuWorld.transpose() << std::endl;
+  std::cout << "Mapping changes: " << (MappingTworld - imuWorld).transpose() << std::endl;
   std::cout << "Tworld:          " << this->Tworld.transpose() << std::endl;
   std::cout << "Mapping Tworld:  " << MappingTworld.transpose() << std::endl;
+
+  if (this->UsingImu && this->CurrentFrameTime != this->PreviousFrameTime)
+  {
+    Eigen::Vector3d ImuVariationT;
+    ImuVariationT << this->ImuVariation(3), this->ImuVariation(4), this->ImuVariation(5);
+
+    Eigen::Vector3d ImuVariationTw = prevWorldRotationMat * ImuVariationT;
+
+    Eigen::Matrix<double, 6, 1> mappingImuVariance;
+    mappingImuVariance << this->ImuVariation(0), this->ImuVariation(1), this->ImuVariation(2), ImuVariationTw;
+
+    // ensures change made by SLAM is within its limits set by the IMU confidence levels
+    for (int i = 0; i < MappingTworld.rows(); i++)
+    {
+      if (MappingTworld(i) < imuWorld(i) - this->ImuVariation(i))
+      {
+        MappingTworld(i) = imuWorld(i) - this->ImuVariation(i);
+        std::cout << "Mapping Correction limit hit on: " << i << std::endl;
+      }
+      else if (MappingTworld(i) > imuWorld(i) + this->ImuVariation(i))
+      {
+        MappingTworld(i) = imuWorld(i) + this->ImuVariation(i);
+        std::cout << "Mapping Correction limit hit on: " << i << std::endl;
+      }
+    }
+
+    //Velocity error correction
+    /*Eigen::Matrix3d Trr = GetRotationMatrix(this->Trelative);
+    Eigen::Vector3d Trt;
+    Trt <<  this->Trelative(3), this->Trelative(4), this->Trelative(5);
+
+    Eigen::Vector3d TrLinearDist = Trr.transpose() * Trt;
+
+    Eigen::Matrix3d Imur = GetRotationMatrix(this->ImuTrelative);
+    Eigen::Vector3d Imut;
+    Imut <<  this->ImuTrelative(3), this->ImuTrelative(4), this->ImuTrelative(5);
+
+    Eigen::Vector3d ImuLinearDist = Imur.transpose() * Imut;
+
+    Eigen::Vector3d ErrorDist = TrLinearDist - ImuLinearDist;
+
+    double timeDiff = this->CurrentFrameTime - this->PreviousFrameTime;
+
+    Eigen::Vector3d ErrorVelocity = ErrorDist/timeDiff;
+
+    this->Velocity -= 0.5 * ErrorVelocity;*/
+
+  }
 
   this->Tworld << MappingTworld;
   // Provide information about keypoints-neighborhood matching rejections
